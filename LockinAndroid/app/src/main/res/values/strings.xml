@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">Lockin</string>
-    <string name="a11y_description">Lockin uses this to see which app or website is open during a focus session, and sends you home if it is on your block list. It does not record or send any data.</string>
-</resources>
