@@ -71,6 +71,15 @@ class MainActivity : Activity() {
     private lateinit var cAll: StatCard
     private var wasRunning = false
 
+    private lateinit var swLink: Switch
+    private lateinit var swAlso: Switch
+    private lateinit var etPair: EditText
+    private lateinit var etHost: EditText
+    private lateinit var tvLink: TextView
+    private lateinit var tvPeer: TextView
+    private lateinit var tvPending: TextView
+    private lateinit var pendingCard: LinearLayout
+
     private val PINK = 0xFFF472B6.toInt()
     private val VIOLET = 0xFFA78BFA.toInt()
 
@@ -175,6 +184,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        if (LockStore.linkEnabled(this) && Link.client == null) LinkService.start(this)
         syncSoundUi()
         refreshStats()
         handler.post(ticker)
@@ -183,12 +193,31 @@ class MainActivity : Activity() {
     override fun onPause() {
         handler.removeCallbacks(ticker)
         if (!LockStore.sessionActive(this, System.currentTimeMillis())) persistConfig()
+        persistLink()
         super.onPause()
     }
 
     // ------------------------------------------------------------------ setup screen
     private fun buildSetup() {
         setupView = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        pendingCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = round(CARD)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            visibility = View.GONE
+        }
+        tvPending = label("", 15f, Color.WHITE, true)
+        pendingCard.addView(tvPending)
+        val prow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val half = { m: Int -> LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(m), dp(10), dp(if (m == 0) 6 else 0), 0) } }
+        prow.addView(button("Not now", 0xFF2A2F3A.toInt()) { Link.decline(this); tick() }, half(0))
+        prow.addView(button("Lock phone", ACCENT) {
+            Link.accept(this)?.let { toast(it) }
+            tick()
+        }, half(6))
+        pendingCard.addView(prow)
+        add(setupView, pendingCard, 16)
 
         tvAccess = label("", 14f, MUTED, true)
         add(setupView, tvAccess, 12)
@@ -223,7 +252,16 @@ class MainActivity : Activity() {
         add(setupView, label("Websites to lock (one per line)", 13f), 20)
         etSites = input(false, 6); add(setupView, etSites, 4)
 
-        add(setupView, button("Start locked session", ACCENT) { start() }, 24)
+        swAlso = Switch(this).apply {
+            text = "Also lock my PC"
+            textSize = 15f
+            setTextColor(Color.WHITE)
+            isEnabled = false
+            visibility = View.GONE
+        }
+        add(setupView, swAlso, 24)
+        add(setupView, button("Start locked session", ACCENT) { start() }, 12)
+        buildLink()
 
         add(setupView, label("Stats", 22f, Color.WHITE, true), 36)
         add(setupView, label("Focus minutes you actually put in.", 13f), 2)
@@ -276,6 +314,8 @@ class MainActivity : Activity() {
             syncSoundUi()
         }
         add(runView, btnSound, 28)
+        tvPeer = label("", 14f, MUTED).apply { gravity = Gravity.CENTER; visibility = View.GONE }
+        add(runView, tvPeer, 16)
     }
 
     // ------------------------------------------------------------------ actions
@@ -342,17 +382,25 @@ class MainActivity : Activity() {
             toast("Max session is 4 hours. This one is ${total / 60000} min.")
             return
         }
+        if (swAlso.isChecked && r > 1 && b == 0) {
+            toast("The PC needs a break of at least 1 minute when you use several rounds")
+            return
+        }
         persistConfig()
         AlertDialog.Builder(this)
             .setTitle("Start locked session?")
             .setMessage(
                 "Locked apps and sites stay blocked during focus time. The whole session ends at " +
                     LockStore.hm(plan.last().end) +
-                    ". Emergency exit only unlocks after a 15 minute wait."
+                    ". Emergency exit only unlocks after a 15 minute wait." +
+                    (if (swAlso.isChecked) " Your PC will also be asked to lock (you confirm on the PC, and the PC lock can't be undone)." else "")
             )
             .setPositiveButton("Lock in") { _, _ ->
                 LockStore.startSession(this, plan, selectedApps, etSites.text.toString())
                 LockService.start(this)
+                Link.peerNote = ""
+                if (swAlso.isChecked && !Link.ask(f, b, r)) toast("Couldn't reach the PC. Only the phone is locked.")
+                swAlso.isChecked = false
                 tick()
             }
             .setNegativeButton("Cancel", null)
@@ -363,6 +411,8 @@ class MainActivity : Activity() {
     private fun tick() {
         val now = System.currentTimeMillis()
         LockStore.settleStats(this, now)
+        Link.expire(this)
+        updateLinkUi()
         val on = isAccessibilityOn(this)
         tvAccess.text = if (on) "Accessibility service: ON" else "Accessibility service: OFF (required to lock)"
         tvAccess.setTextColor(if (on) OK else DANGER)
@@ -443,6 +493,66 @@ class MainActivity : Activity() {
         cStreak.sub.text = if (s == 1) "day in a row" else "days in a row"
         cAll.value.text = LockStore.fmtDur(tot)
         cAll.sub.text = "$n sessions"
+    }
+
+    private fun buildLink() {
+        add(setupView, label("PC link (same Wi-Fi)", 22f, Color.WHITE, true), 36)
+        add(setupView, label("Lock the phone and the PC together. It always asks on the other device first, and the PC lock can't be undone.", 13f), 2)
+        swLink = Switch(this).apply {
+            text = "Link with my PC"
+            textSize = 15f
+            setTextColor(Color.WHITE)
+            isChecked = LockStore.linkEnabled(this@MainActivity)
+            setOnCheckedChangeListener { _, on ->
+                persistLink()
+                LockStore.setLinkEnabled(this@MainActivity, on)
+                if (on) Link.restart(this@MainActivity) else LinkService.stop(this@MainActivity)
+                updateLinkUi()
+            }
+        }
+        add(setupView, swLink, 14)
+        add(setupView, label("Pairing code (on the PC: Focus > Settings > Link with phone)", 13f), 12)
+        etPair = input(false).apply {
+            hint = "XXXX-XXXX-XXXX"
+            setText(LockStore.linkSecret(this@MainActivity))
+        }
+        add(setupView, etPair, 4)
+        add(setupView, label("PC address (optional, found automatically if empty)", 13f), 12)
+        etHost = input(false).apply {
+            hint = "192.168.1.23"
+            setText(LockStore.linkHost(this@MainActivity))
+        }
+        add(setupView, etHost, 4)
+        tvLink = label("", 14f, MUTED, true)
+        add(setupView, tvLink, 10)
+        add(setupView, button("Save and reconnect", CARD) {
+            persistLink()
+            if (LockStore.linkEnabled(this)) Link.restart(this)
+        }, 8)
+    }
+
+    private fun persistLink() {
+        if (!::etPair.isInitialized || !::etHost.isInitialized) return
+        LockStore.saveLink(this, etPair.text.toString().trim(), etHost.text.toString().trim())
+    }
+
+    private fun updateLinkUi() {
+        val enabled = LockStore.linkEnabled(this)
+        val conn = Link.connected()
+        tvLink.text = if (enabled) Link.status() else "Off"
+        tvLink.setTextColor(if (conn) OK else MUTED)
+        swAlso.visibility = if (enabled) View.VISIBLE else View.GONE
+        swAlso.isEnabled = conn
+        if (!conn && swAlso.isChecked) swAlso.isChecked = false
+        swAlso.text = if (conn) "Also lock my PC" else "Also lock my PC (PC not connected)"
+        val p = LockStore.pending(this)
+        pendingCard.visibility = if (p != null) View.VISIBLE else View.GONE
+        if (p != null) {
+            tvPending.text = "Your PC started a locked session: ${p.f} min focus" +
+                (if (p.r > 1) " x ${p.r} rounds" else "") + ". Lock your phone too?"
+        }
+        tvPeer.text = Link.peerNote
+        tvPeer.visibility = if (Link.peerNote.isEmpty()) View.GONE else View.VISIBLE
     }
 
     private fun isAccessibilityOn(c: Context): Boolean {

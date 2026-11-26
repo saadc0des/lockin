@@ -50,6 +50,17 @@ Same idea as the desktop app, shown at the bottom of the main screen: **Today**,
 - Blocks shorter than 30 seconds are ignored.
 - Everything is stored on the phone only. Uninstalling the app deletes it.
 
+## PC link (optional)
+Lock the phone and the PC together, same Wi-Fi only, nothing goes online.
+1. On the PC (updated Lockin desktop app): Focus > Settings > **Link with phone** on. It shows a pairing code and the PC address.
+2. On the phone: **PC link** section, switch on, type the pairing code, **Save and reconnect**. The PC is found automatically
+   (type its address only if your router blocks discovery). If the PC uses a firewall, allow port 47653 (TCP and UDP).
+3. Starting a session: tick **Also lock my PC** (phone) or **Also lock my phone** (PC) before you start. The other device
+   shows a notification/banner and only locks after you confirm there. Not ticked = nothing happens on the other device.
+- The PC lock can't be released from the phone, and the phone's emergency exit only ends the phone.
+- The link keeps a small silent notification. Samsung may pause it when the screen is off for a long time; it reconnects by itself.
+- If the PC asks and the phone's accessibility service is off, or no apps/sites are chosen, the phone says no and tells the PC why.
+
 ## Honest limits
 - Medium strictness by design: someone with ADB, Safe Mode or a factory reset can undo it. Changing the phone clock
   can also confuse it. It is a speed bump against impulse, not security.

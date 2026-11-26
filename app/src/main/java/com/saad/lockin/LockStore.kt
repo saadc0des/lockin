@@ -61,7 +61,7 @@ object LockStore {
     }
 
     /** Pomodoro plan. rounds = 1 gives a plain timer. Long break (15 min) after every 4th round. */
-    fun plan(now: Long, focusMin: Int, breakMin: Int, rounds: Int): List<Window> {
+    fun plan(now: Long, focusMin: Int, breakMin: Int, rounds: Int, longMin: Int = -1, every: Int = 4): List<Window> {
         val out = ArrayList<Window>()
         var t = now
         for (i in 1..rounds) {
@@ -69,7 +69,8 @@ object LockStore {
             out.add(Window(t, fe, true))
             t = fe
             if (i < rounds && breakMin > 0) {
-                val len = if (i % 4 == 0) maxOf(breakMin, 15) else breakMin
+                val lm = if (longMin > 0) longMin else maxOf(breakMin, 15)
+                val len = if (every > 0 && i % every == 0) lm else breakMin
                 val be = t + len * 60_000L
                 out.add(Window(t, be, false))
                 t = be
@@ -112,6 +113,38 @@ object LockStore {
 
     fun sessionSites(c: Context): List<String> =
         (p(c).getString("s_sites", "") ?: "").split("\n").filter { it.isNotBlank() }
+
+    // ------------------------------------------------------------ PC link
+    const val PENDING_MS = 10 * 60 * 1000L
+
+    /** A "lock your phone too" request from the PC that is waiting for the user. */
+    data class LinkReq(val id: String, val f: Int, val b: Int, val lg: Int, val r: Int, val ev: Int, val at: Long)
+
+    fun linkEnabled(c: Context) = p(c).getBoolean("link_on", false)
+    fun setLinkEnabled(c: Context, on: Boolean) { p(c).edit().putBoolean("link_on", on).commit() }
+    fun linkSecret(c: Context): String = p(c).getString("link_secret", "") ?: ""
+    fun linkHost(c: Context): String = p(c).getString("link_host", "") ?: ""
+    fun saveLink(c: Context, secret: String, host: String) {
+        p(c).edit().putString("link_secret", secret).putString("link_host", host).commit()
+    }
+    fun linkLast(c: Context): String = p(c).getString("link_last", "") ?: ""
+    fun setLinkLast(c: Context, v: String) { p(c).edit().putString("link_last", v).apply() }
+
+    fun setPending(c: Context, r: LinkReq) {
+        p(c).edit().putString("link_pending", "${r.id},${r.f},${r.b},${r.lg},${r.r},${r.ev},${r.at}").commit()
+    }
+
+    fun pendingAny(c: Context): LinkReq? {
+        val a = (p(c).getString("link_pending", "") ?: "").split(",")
+        if (a.size != 7) return null
+        val n = a.drop(1).map { it.toLongOrNull() ?: return null }
+        return LinkReq(a[0], n[0].toInt(), n[1].toInt(), n[2].toInt(), n[3].toInt(), n[4].toInt(), n[5])
+    }
+
+    fun pending(c: Context, now: Long = System.currentTimeMillis()): LinkReq? =
+        pendingAny(c)?.takeIf { now - it.at <= PENDING_MS }
+
+    fun clearPending(c: Context) { p(c).edit().putString("link_pending", "").commit() }
 
     // ------------------------------------------------------------ sounds setting
     fun soundsOn(c: Context) = p(c).getBoolean("sounds_on", true)
